@@ -49,7 +49,7 @@
 <body>
   <header>
     <h1>Upgrade Optimizer</h1>
-    <p class="sub">Pick your current levels — get the next optimal upgrade and a full ordered list with improvements.</p>
+    <p class="sub">Pick your current levels and get the next optimal upgrade and a full ordered list with improvements.</p>
   </header>
 
   <div class="wrap">
@@ -485,7 +485,7 @@ function renderSequence(){
 
   if(step===0){
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="7" class="muted">Nothing to upgrade — everything is maxed from current levels.</td>`;
+    tr.innerHTML = `<td colspan="7" class="muted">Congrats! Nothing left to upgrade</td>`;
     tbody.appendChild(tr);
   }
 }
