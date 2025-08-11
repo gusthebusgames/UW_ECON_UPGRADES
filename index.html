@@ -19,15 +19,15 @@
   .card h2{font-size:18px;margin:0 0 8px}
   .card .in{padding:16px}
   label{display:block;font-size:13px;color:var(--sub);margin:10px 0 6px}
-  select{
-    width:100%;background:#0f1428;border:1px solid #273058;color:var(--ink);
-    border-radius:10px;padding:10px 12px;outline:none
+  select,input{
+    background:#0f1428;border:1px solid #273058;color:var(--ink);
+    border-radius:10px;padding:8px 10px;outline:none
   }
   .row{display:grid;grid-template-columns:1fr 1fr; gap:10px}
-  .mvn{display:flex; gap:10px; align-items:center; margin-top:8px}
+  .mvn{display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap}
   .mvn select{max-width:220px}
   .btns{display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; align-items:center}
-  .btns .inline{display:flex; gap:10px; align-items:center}
+  .btns .inline{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
   button{
     background:var(--acc); color:#0b0e1a; font-weight:700; border:0; padding:10px 14px;
     border-radius:12px; cursor:pointer; transition:filter .15s ease
@@ -35,6 +35,8 @@
   button:hover{filter:brightness(1.05)}
   .result{padding:14px 16px; border-top:1px solid var(--muted); background:#0e1326;border-radius:0 0 16px 16px}
   .result strong{color:var(--good)}
+  .steps{margin-top:8px; font-size:13px; color:#cfe0ff}
+  .steps code{background:#12183a;border:1px solid #263067;border-radius:8px;padding:2px 6px}
   table{width:100%; border-collapse:collapse; font-size:14px}
   th,td{padding:10px 8px; border-bottom:1px solid #1e2440}
   th{color:#b7bfea;text-align:left}
@@ -43,13 +45,16 @@
   .muted{color:#9aa3cc}
   .tiny{font-size:12px;color:#92a0d8}
   .footer-note{margin-top:8px;color:#8d97c9;font-size:12px}
+  .adv{display:flex;gap:8px;flex-wrap:wrap}
+  .adv label{margin:0}
+  .adv input{width:82px}
   @media (max-width:880px){ .grid{grid-template-columns:1fr} }
 </style>
 </head>
 <body>
   <header>
     <h1>Upgrade Optimizer</h1>
-    <p class="sub">Pick your current levels and get the next optimal upgrade and a full ordered list with improvements.</p>
+    <p class="sub">Select your current upgrade levels to see the next optimal upgrade suggestion. This tool is a guide, don’t follow it blindly, use your own judgment.</p>
   </header>
 
   <div class="wrap">
@@ -119,11 +124,37 @@
           <div class="btns">
             <button id="btn-next">Compute NEXT best</button>
             <button id="btn-sequence">Compute full order</button>
+			<div class="inline">
+              <label class="tiny" style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" id="chkBHPerk" />
+                Calculate taking BH perk in consideration.
+              </label>
+            </div>
             <div class="inline">
               <label class="tiny" style="display:flex;align-items:center;gap:8px">
                 <input type="checkbox" id="chkLookahead" />
                 Allow multiple cheaper upgrades if they beat the next expensive one (lookahead)
               </label>
+            </div>
+            <div class="inline">
+              <label class="tiny" style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" id="chkBatchBeam" />
+                Batch cooldowns (beam search, sync-aware)
+              </label>
+              <div class="adv">
+                <label class="tiny">Depth
+                  <input id="beamDepth" type="number" min="2" max="20" value="10">
+                </label>
+                <label class="tiny">Beam
+                  <input id="beamWidth" type="number" min="5" max="100" value="40">
+                </label>
+                <label class="tiny">Min batch gain %
+                  <input id="minBatchGainPct" type="number" min="0" max="100" value="2">
+                </label>
+                <label class="tiny">Beat ε %
+                  <input id="beatEpsPct" type="number" min="0" max="20" value="2">
+                </label>
+              </div>
             </div>
           </div>
         </div>
@@ -155,8 +186,8 @@
             </table>
           </div>
           <div class="footer-note">
-            Multiplicative bonuses with time-discrete simulation (1s). Accounts for GT/BH/DW sync and MVN shared cooldown.
-            Lookahead compares a single expensive step vs. a combo of cheaper steps within the same budget.
+            Beam search explores cooldown sequences up to Depth with sync-aware priority (overlap & cooldown CV).
+            Batch is chosen if its per-cost outperforms the best single (incl. lookahead) by ε and meets min gain.
           </div>
         </div>
       </div>
@@ -258,12 +289,16 @@ function fillSelect(sel, arr, fmt = v => v.value){
 }
 
 function currentState(){
+  let BH_Bonus = 0;
+  if (document.getElementById("chkBHPerk").checked) {
+    BH_Bonus = 12;
+  }
   return {
     GT_Bonus_i: +$("#GT_Bonus_sel").value,
     GT_Cooldown_i: +$("#GT_Cooldown_sel").value,
     GT_Duration_i: +$("#GT_Duration_sel").value,
     BH_Cooldown_i: +$("#BH_Cooldown_sel").value,
-    BH_Duration_i: +$("#BH_Duration_sel").value,
+    BH_Duration_i: +$("#BH_Duration_sel").value + BH_Bonus,
     DW_Cooldown_i: +$("#DW_Cooldown_sel").value,
     SL_Quantity_i: +$("#SL_Quantity_sel").value,
     SL_Angle_i: +$("#SL_Angle_sel").value,
@@ -295,15 +330,14 @@ function effectiveCooldowns(state){
   return {gt: shared, bh: shared, dw: shared};
 }
 
-// Multiplicative simulation (1s) over a period ≈ LCM of cooldowns (cap 3600s)
-function simulateMultiplier(state){
-  // SL – always on, coverage
+/*** ==== SIMULATION & METRICS ==== ***/
+// Unified simulation: average multiplier + overlap stats
+function simulateStats(state){
   const SL_Q = valueOf("SL_Quantity", state.SL_Quantity_i);
   const SL_A = valueOf("SL_Angle", state.SL_Angle_i);
   const coverage = Math.min(1, (SL_Q * SL_A) / 360);
   const SLmult = 1 + (3 - 1) * coverage;
 
-  // GT/BH/DW bonuses & durations
   const GTbonus = valueOf("GT_Bonus", state.GT_Bonus_i);
   const GTdur   = valueOf("GT_Duration", state.GT_Duration_i);
 
@@ -311,7 +345,7 @@ function simulateMultiplier(state){
   const BHdur   = valueOf("BH_Duration", state.BH_Duration_i);
 
   const DWbonus = 2.5;
-  const DWdur   = 10; // ring
+  const DWdur   = 10;
 
   const {gt:GTcd, bh:BHcd, dw:DWcd} = effectiveCooldowns(state);
 
@@ -319,17 +353,37 @@ function simulateMultiplier(state){
   period = Math.min(period, 3600);
   if (period < Math.max(GTdur, BHdur, DWdur)) period = Math.max(GTdur, BHdur, DWdur);
 
-  let sumMult = 0;
+  let sumMult = 0, over2 = 0, over3 = 0;
   for(let t=0; t<period; t++){
-    const activeGT = ((t % GTcd) < GTdur) ? GTbonus : 1;
-    const activeBH = ((t % BHcd) < BHdur) ? BHbonus : 1;
-    const activeDW = ((t % DWcd) < DWdur) ? DWbonus : 1;
-    sumMult += SLmult * activeGT * activeBH * activeDW;
+    const aGT = ((t % GTcd) < GTdur);
+    const aBH = ((t % BHcd) < BHdur);
+    const aDW = ((t % DWcd) < DWdur);
+    const mGT = aGT ? GTbonus : 1;
+    const mBH = aBH ? BHbonus : 1;
+    const mDW = aDW ? DWbonus : 1;
+    sumMult += SLmult * mGT * mBH * mDW;
+    const n = (aGT?1:0) + (aBH?1:0) + (aDW?1:0);
+    if(n>=2) over2++;
+    if(n===3) over3++;
   }
-  return sumMult / period;
+  return { avg: sumMult/period, over2: over2/period, over3: over3/period };
 }
 
+function simulateMultiplier(state){ return simulateStats(state).avg; }
+
+function cooldownCV(state){
+  const {gt,bh,dw} = effectiveCooldowns(state);
+  const arr = [gt,bh,dw];
+  const mean = (gt+bh+dw)/3;
+  if(mean <= 0) return 0;
+  const v = arr.reduce((s,x)=> s + (x-mean)*(x-mean), 0)/3;
+  return Math.sqrt(v)/mean;
+}
+
+/*** ==== UPGRADE CANDIDATES ==== ***/
 function cloneState(s){ return JSON.parse(JSON.stringify(s)); }
+
+const COOLDOWN_KEYS = ["GT_Cooldown","BH_Cooldown","DW_Cooldown"];
 
 const NEXT_DIR = {
   GT_Bonus:+1, GT_Cooldown:+1, GT_Duration:+1,
@@ -342,7 +396,6 @@ const LIMITS = {
   DW_Cooldown: DW_Cooldown.length-1, SL_Angle: SL_Angle.length-1, SL_Quantity: SL_Quantity.length-1
 };
 
-// Single-step candidate
 function tryUpgrade(state, key){
   const idxKey = key + "_i";
   const idx = state[idxKey];
@@ -362,7 +415,14 @@ function allPossibleNext(state){
     .map(k=>tryUpgrade(state,k)).filter(Boolean);
 }
 
-// Lookahead: combine multiple cheaper steps within the budget (the expensive upgrade's cost)
+function bestCooldownSingle(state){
+  const cand = COOLDOWN_KEYS.map(k=>tryUpgrade(state,k)).filter(Boolean);
+  if(!cand.length) return null;
+  cand.sort((a,b)=> (b.score - a.score) || (b.gain - a.gain));
+  return cand[0];
+}
+
+/*** ==== LOOKAHEAD (budget-based over any upgrades) ==== ***/
 function lookaheadPlan(state, budget){
   let working = cloneState(state);
   let totalCost = 0;
@@ -388,30 +448,187 @@ function lookaheadPlan(state, budget){
   return { plan, totalCost, totalGain, ratio: totalGain / Math.max(1, totalCost) };
 }
 
-// Choose next step, optionally with lookahead
-function pickBestNext(state, useLookahead){
-  const cand = allPossibleNext(state);
-  if(!cand.length) return null;
-  cand.sort((a,b)=> (b.score - a.score) || (b.gain - a.gain));
-  const primary = cand[0]; // best single-step per cost
+/*** ==== BEAM SEARCH FOR COOLDOWN BATCH ==== ***/
+function applyNextCooldownStep(state, key){
+  const idxKey = key + "_i";
+  const idx = state[idxKey];
+  if(idx >= LIMITS[key]) return null;
+  const nextIdx = idx + 1;
+  const cost = costOf(key, nextIdx);
+  const toVal = valueOf(key, nextIdx);
+  const s2 = cloneState(state);
+  s2[idxKey] = nextIdx;
+  return { state: s2, step: { key, to: toVal, cost, nextIdx } };
+}
 
-  if(!useLookahead || primary.cost <= 0){
-    return {...primary, usedLookahead:false};
+function tripleKey(state){
+  return `gt${state.GT_Cooldown_i}-bh${state.BH_Cooldown_i}-dw${state.DW_Cooldown_i}`;
+}
+
+function beamSearchCooldownBatch(state, depth=8, beamW=40, alpha=0.5, beta=0.2, gamma=0.3){
+  const baseStats = simulateStats(state);
+  const baseCV = cooldownCV(state);
+
+  // Start node
+  let beam = [{
+    state: cloneState(state),
+    cost: 0,
+    stats: baseStats,
+    cv: baseCV,
+    plan: [],
+    ratio: 0,
+    prior: 0
+  }];
+
+  let best = null;
+  const seen = new Map(); // triple -> minCost
+
+  for(let d=0; d<depth; d++){
+    const next = [];
+    for(const node of beam){
+      for(const key of COOLDOWN_KEYS){
+        const child = applyNextCooldownStep(node.state, key);
+        if(!child) continue;
+        const totalCost = node.cost + child.step.cost;
+        const stats = simulateStats(child.state);
+        const cv = cooldownCV(child.state);
+
+        const gain = stats.avg / baseStats.avg - 1;
+        const ratio = gain / Math.max(1, totalCost);
+
+        const d3 = stats.over3 - baseStats.over3;
+        const d2 = stats.over2 - baseStats.over2;
+        const syncGain = Math.max(0, (baseCV - cv)); // positive when cv drops
+
+        const prior = ratio + alpha*d3 + beta*d2 + gamma*syncGain;
+
+        const newNode = {
+          state: child.state,
+          cost: totalCost,
+          stats, cv,
+          plan: [...node.plan, child.step],
+          ratio, prior
+        };
+
+        // Dominance pruning by cooldown triple
+        const tk = tripleKey(child.state);
+        const seenCost = seen.get(tk);
+        if(seenCost !== undefined && seenCost <= totalCost) continue;
+        seen.set(tk, totalCost);
+
+        next.push(newNode);
+        if(!best || newNode.ratio > best.ratio) best = newNode;
+      }
+    }
+    if(!next.length) break;
+    next.sort((a,b)=> b.prior - a.prior);
+    beam = next.slice(0, beamW);
+  }
+  return best;
+}
+
+// Run small restarts: force first step GT/BH/DW (if possible) and take best among runs
+function bestCooldownBatchWithRestarts(state, depth, beamW){
+  const alpha=0.5, beta=0.2, gamma=0.3;
+
+  let bestOverall = beamSearchCooldownBatch(state, depth, beamW, alpha,beta,gamma);
+
+  for(const key of COOLDOWN_KEYS){
+    const first = applyNextCooldownStep(state, key);
+    if(!first) continue;
+    const s2 = first.state;
+    const subBest = beamSearchCooldownBatch(s2, Math.max(0, depth-1), beamW, alpha,beta,gamma);
+    if(subBest){
+      // prepend forced first step
+      const startStats = simulateStats(state);
+      const multGain = subBest.stats.avg / startStats.avg - 1; // recompute vs true base
+      const totalCost = first.step.cost + subBest.cost;
+      const ratio = multGain / Math.max(1,totalCost);
+      const combined = {
+        ...subBest,
+        plan: [first.step, ...subBest.plan],
+        cost: totalCost,
+        ratio,
+        stats: simulateStats(subBest.state) // ensure stats present
+      };
+      if(!bestOverall || combined.ratio > bestOverall.ratio) bestOverall = combined;
+    }else{
+      // Only the forced first step
+      const stats = simulateStats(s2);
+      const startStats = simulateStats(state);
+      const gain = stats.avg / startStats.avg - 1;
+      const ratio = gain / Math.max(1, first.step.cost);
+      const single = { state:s2, cost:first.step.cost, stats, plan:[first.step], ratio, prior:ratio };
+      if(!bestOverall || single.ratio > bestOverall.ratio) bestOverall = single;
+    }
+  }
+  return bestOverall;
+}
+
+/*** ==== PICK BEST (single/lookahead vs batch) ==== ***/
+function pickBestNext(state, useLookahead, useBatchBeam){
+  // Baseline across ALL upgrades (as before)
+  const candAll = allPossibleNext(state);
+  if(!candAll.length) return null;
+  candAll.sort((a,b)=> (b.score - a.score) || (b.gain - a.gain));
+  let baseline = candAll[0];
+
+  // Optional lookahead vs the next expensive
+  if(useLookahead && baseline.cost > 0){
+    const planLA = lookaheadPlan(state, baseline.cost);
+    if(planLA.plan.length >= 1 && planLA.ratio > (baseline.gain / Math.max(1, baseline.cost))){
+      const first = planLA.plan[0];
+      baseline = {
+        ...first,
+        usedLookahead:true,
+        altCompared: { single: candAll[0], combo: planLA }
+      };
+    }else{
+      baseline.usedLookahead = false;
+    }
+  }else{
+    baseline.usedLookahead = false;
   }
 
-  // Build a combo plan under budget = primary.cost
-  const plan = lookaheadPlan(state, primary.cost);
+  if(!useBatchBeam){
+    return {...baseline, usedBatch:false};
+  }
 
-  if(plan.plan.length >= 1 && plan.ratio > (primary.gain / Math.max(1, primary.cost))){
-    const first = plan.plan[0];
+  // Beam batch (cooldowns only)
+  const depth = Math.max(2, Math.min(20, parseInt($("#beamDepth").value || "8",10)));
+  const beamW = Math.max(5, Math.min(100, parseInt($("#beamWidth").value || "40",10)));
+  const minBatchGain = (parseFloat($("#minBatchGainPct").value || "2")/100);
+  const eps = (parseFloat($("#beatEpsPct").value || "2")/100);
+
+  const batch = bestCooldownBatchWithRestarts(state, depth, beamW);
+
+  if(!batch || batch.plan.length===0) return {...baseline, usedBatch:false};
+
+  // Compute baseline ratio for fair comparison
+  let baselineRatio;
+  if(baseline.usedLookahead && baseline.altCompared?.combo){
+    baselineRatio = baseline.altCompared.combo.ratio;
+  }else{
+    baselineRatio = baseline.gain / Math.max(1, baseline.cost);
+  }
+
+  const batchGain = batch.stats.avg / simulateStats(state).avg - 1;
+  const batchRatio = batchGain / Math.max(1, batch.cost);
+
+  if(batchGain >= minBatchGain && batchRatio > baselineRatio * (1 + eps)){
     return {
-      ...first,
-      usedLookahead:true,
-      altCompared: { single: primary, combo: plan }
+      key: "(Cooldown batch)",
+      to: `${batch.plan.length} steps`,
+      cost: batch.cost,
+      gain: batchGain,
+      nextIdx: null,
+      usedLookahead:false,
+      usedBatch:true,
+      batchPlan: batch
     };
   }
 
-  return {...primary, usedLookahead:false};
+  return {...baseline, usedBatch:false};
 }
 
 /*** ==== UI ==== ***/
@@ -422,13 +639,39 @@ function renderCurrentMult(){
 function fmtPctDirect(p){ return p.toFixed(2)+"%"; }
 function fmtNum(x){ return x.toLocaleString("en-US"); }
 
+function upgradeKeyLabel(k){ return k.replaceAll("_"," "); }
+
 function renderNext(){
   const state = currentState();
-  const best = pickBestNext(state, $("#chkLookahead").checked);
+  const best = pickBestNext(state, $("#chkLookahead").checked, $("#chkBatchBeam").checked);
   if(!best){
     $("#nextResult").innerHTML = "<strong>Everything is maxed.</strong>";
     return;
   }
+
+  // Batch picked
+  if(best.usedBatch){
+    const before = simulateMultiplier(state);
+    let afterState = cloneState(state);
+    best.batchPlan.plan.forEach(step => { afterState[step.key+"_i"] = step.nextIdx; });
+    const after = simulateMultiplier(afterState);
+
+    const stepsList = best.batchPlan.plan
+      .map((s,i)=>`${i+1}. ${upgradeKeyLabel(s.key)} → ${s.to} (cost ${fmtNum(s.cost)})`)
+      .join("<br/>");
+
+    $("#nextResult").innerHTML = `
+      <strong>Recommendation: Save for a cooldown batch</strong> of <strong>${best.batchPlan.plan.length}</strong> steps
+      (total cost <strong>${fmtNum(best.batchPlan.cost)}</strong>).<br/>
+      Expected improvement: <strong>${fmtPctDirect(best.gain*100)}</strong>
+      (from ${before.toFixed(4)}× to ${after.toFixed(4)}×).
+      <div class="steps"><div>Planned steps:</div>${stepsList}</div>
+      <div class="tiny">Batch beats best single per-cost by your ε threshold.</div>
+    `;
+    return;
+  }
+
+  // Single (or lookahead first step)
   const newState = cloneState(state);
   newState[best.key+"_i"] = best.nextIdx;
   const before = simulateMultiplier(state);
@@ -444,7 +687,7 @@ function renderNext(){
   }
 
   $("#nextResult").innerHTML = `
-    Next optimal upgrade: <strong>${best.key.replaceAll("_"," ")}</strong>
+    Next optimal upgrade: <strong>${upgradeKeyLabel(best.key)}</strong>
     → <strong>${best.to}</strong> (cost <strong>${fmtNum(best.cost)}</strong>).<br/>
     Improvement: <strong>${fmtPctDirect(best.gain*100)}</strong>
     (from ${before.toFixed(4)}× to ${after.toFixed(4)}×).
@@ -461,16 +704,38 @@ function renderSequence(){
   renderCurrentMult();
 
   while(true){
-    const best = pickBestNext(state, $("#chkLookahead").checked);
+    const best = pickBestNext(state, $("#chkLookahead").checked, $("#chkBatchBeam").checked);
     if(!best) break;
 
+    if(best.usedBatch){
+      // Apply whole batch as consecutive steps
+      best.batchPlan.plan.forEach((st)=>{
+        const before = currentMult;
+        state[st.key+"_i"] = st.nextIdx;
+        const newMult = simulateMultiplier(state);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${++step}</td>
+          <td>${upgradeKeyLabel(st.key)} <span class="tiny">(batch)</span></td>
+          <td>${st.to}</td>
+          <td class="num">${fmtNum(st.cost)}</td>
+          <td class="num">${fmtPctDirect((newMult/before-1)*100)}</td>
+          <td class="num">${((newMult/before-1) / Math.max(1,st.cost)).toFixed(6)}</td>
+          <td class="num">${newMult.toFixed(4)}×</td>
+        `;
+        tbody.appendChild(tr);
+        currentMult = newMult;
+      });
+      continue;
+    }
+
+    // Single or lookahead-first
     state[best.key+"_i"] = best.nextIdx;
     const newMult = simulateMultiplier(state);
-
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${++step}</td>
-      <td>${best.key.replaceAll("_"," ")}</td>
+      <td>${upgradeKeyLabel(best.key)}</td>
       <td>${best.to}</td>
       <td class="num">${fmtNum(best.cost)}</td>
       <td class="num">${fmtPctDirect((newMult/currentMult-1)*100)}</td>
@@ -485,7 +750,7 @@ function renderSequence(){
 
   if(step===0){
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="7" class="muted">Congrats! Nothing left to upgrade</td>`;
+    tr.innerHTML = `<td colspan="7" class="muted">Congrats! Nothing left to upgrade.</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -504,7 +769,7 @@ fillSelect($("#SL_Angle_sel"), SL_Angle, o=>o.value+"°");
 document.querySelectorAll("select").forEach(s=> s.value = 0);
 renderCurrentMult();
 
-document.querySelectorAll("select, input[type=checkbox]").forEach(el=>{
+document.querySelectorAll("select, input[type=checkbox], input[type=number]").forEach(el=>{
   el.addEventListener("change", ()=>{
     renderCurrentMult();
     $("#nextResult").innerHTML = `<span class="muted">Click “Compute NEXT best”.</span>`;
