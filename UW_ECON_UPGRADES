@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Upgrade Optimizer</title>
+<style>
+  :root{
+    --bg:#0f1220; --panel:#151a2e; --ink:#e9ecff; --sub:#aab1d7; --acc:#7c9cff; --good:#53d38b; --muted:#222846;
+  }
+  html,body{margin:0;height:100%;color:var(--ink);background:linear-gradient(180deg,#0b0e1a, #0f1220);}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; line-height:1.35}
+  header{padding:24px 16px 8px; text-align:center}
+  h1{margin:0 0 6px;font-weight:800;letter-spacing:.3px}
+  p.sub{margin:0;color:var(--sub)}
+  .wrap{max-width:1100px;margin:18px auto;padding:0 12px 80px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .card{background:var(--panel);border:1px solid #1e2440;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .card h2{font-size:18px;margin:0 0 8px}
+  .card .in{padding:16px}
+  label{display:block;font-size:13px;color:var(--sub);margin:10px 0 6px}
+  select{
+    width:100%;background:#0f1428;border:1px solid #273058;color:var(--ink);
+    border-radius:10px;padding:10px 12px;outline:none
+  }
+  .row{display:grid;grid-template-columns:1fr 1fr; gap:10px}
+  .mvn{display:flex; gap:10px; align-items:center; margin-top:8px}
+  .mvn select{max-width:220px}
+  .btns{display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; align-items:center}
+  .btns .inline{display:flex; gap:10px; align-items:center}
+  button{
+    background:var(--acc); color:#0b0e1a; font-weight:700; border:0; padding:10px 14px;
+    border-radius:12px; cursor:pointer; transition:filter .15s ease
+  }
+  button:hover{filter:brightness(1.05)}
+  .result{padding:14px 16px; border-top:1px solid var(--muted); background:#0e1326;border-radius:0 0 16px 16px}
+  .result strong{color:var(--good)}
+  table{width:100%; border-collapse:collapse; font-size:14px}
+  th,td{padding:10px 8px; border-bottom:1px solid #1e2440}
+  th{color:#b7bfea;text-align:left}
+  td.num{text-align:right; font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#1c2242;color:#cfe0ff}
+  .muted{color:#9aa3cc}
+  .tiny{font-size:12px;color:#92a0d8}
+  .footer-note{margin-top:8px;color:#8d97c9;font-size:12px}
+  @media (max-width:880px){ .grid{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Upgrade Optimizer</h1>
+    <p class="sub">Pick your current levels — get the next optimal upgrade and a full ordered list with improvements.</p>
+  </header>
+
+  <div class="wrap">
+    <div class="grid">
+      <div class="card">
+        <div class="in">
+          <h2>Current levels</h2>
+
+          <div class="row">
+            <div>
+              <label>GT Bonus (x)</label>
+              <select id="GT_Bonus_sel"></select>
+            </div>
+            <div>
+              <label>GT Cooldown (s)</label>
+              <select id="GT_Cooldown_sel"></select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label>GT Duration (s)</label>
+              <select id="GT_Duration_sel"></select>
+            </div>
+            <div>
+              <label>BH Cooldown (s)</label>
+              <select id="BH_Cooldown_sel"></select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label>BH Duration (s)</label>
+              <select id="BH_Duration_sel"></select>
+            </div>
+            <div>
+              <label>DW Cooldown (s)</label>
+              <select id="DW_Cooldown_sel"></select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label>SL Quantity</label>
+              <select id="SL_Quantity_sel"></select>
+            </div>
+            <div>
+              <label>SL Angle (°)</label>
+              <select id="SL_Angle_sel"></select>
+            </div>
+          </div>
+
+          <div class="mvn">
+            <label style="margin:0;display:flex;align-items:center;gap:8px">
+              <input type="checkbox" id="MVN_has" />
+              I have MVN
+            </label>
+            <select id="MVN_tier">
+              <option value="20">Epic (+20s)</option>
+              <option value="10">Legendary (+10s)</option>
+              <option value="1">Mythic (+1s)</option>
+              <option value="-10">Ancestral (-10s)</option>
+            </select>
+            <span class="tiny">(Shared CD for GT/BH/DW: average + offset)</span>
+          </div>
+
+          <div class="btns">
+            <button id="btn-next">Compute NEXT best</button>
+            <button id="btn-sequence">Compute full order</button>
+            <div class="inline">
+              <label class="tiny" style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" id="chkLookahead" />
+                Allow multiple cheaper upgrades if they beat the next expensive one (lookahead)
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="result" id="nextResult">
+          <span class="muted">Click “Compute NEXT best”.</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="in">
+          <h2>Order & improvements</h2>
+          <div class="row" style="margin-bottom:10px">
+            <div><span class="pill" id="currentMultiplier">Current effective multiplier: –</span></div>
+          </div>
+          <div style="overflow:auto; max-height:520px">
+            <table id="seqTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Upgrade</th>
+                  <th>New value</th>
+                  <th class="num">Cost</th>
+                  <th class="num">Improvement</th>
+                  <th class="num">Per cost</th>
+                  <th class="num">New total mult.</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="footer-note">
+            Multiplicative bonuses with time-discrete simulation (1s). Accounts for GT/BH/DW sync and MVN shared cooldown.
+            Lookahead compares a single expensive step vs. a combo of cheaper steps within the same budget.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/*** ==== DATA ==== ***/
+const MVN = [20, 10, 1, -10];
+
+// GT
+const GT_Bonus = [
+  { value: 5.00, cost: 0 }, { value: 5.80, cost: 5 }, { value: 6.60, cost: 13 },
+  { value: 7.40, cost: 22 }, { value: 8.20, cost: 32 }, { value: 9.00, cost: 43 },
+  { value: 9.80, cost: 55 }, { value: 10.60, cost: 68 }, { value: 11.40, cost: 82 },
+  { value: 12.20, cost: 98 }, { value: 13.00, cost: 116 }, { value: 13.80, cost: 138 },
+  { value: 14.60, cost: 162 }, { value: 15.40, cost: 250 }, { value: 16.20, cost: 350 },
+  { value: 17.00, cost: 500 }, { value: 17.80, cost: 700 }, { value: 18.60, cost: 950 },
+  { value: 19.40, cost: 1250 }, { value: 20.20, cost: 1600 }, { value: 21.00, cost: 2000 }
+];
+const GT_Cooldown = [
+  { value: 300, cost: 0 }, { value: 290, cost: 10 }, { value: 280, cost: 28 },
+  { value: 270, cost: 46 }, { value: 260, cost: 64 }, { value: 250, cost: 82 },
+  { value: 240, cost: 100 }, { value: 230, cost: 118 }, { value: 220, cost: 136 },
+  { value: 210, cost: 154 }, { value: 200, cost: 172 }, { value: 190, cost: 190 },
+  { value: 180, cost: 208 }, { value: 170, cost: 226 }, { value: 160, cost: 244 },
+  { value: 150, cost: 262 }, { value: 140, cost: 300 }, { value: 130, cost: 368 },
+  { value: 120, cost: 476 }, { value: 110, cost: 644 }, { value: 100, cost: 872 }
+];
+const GT_Duration = [
+  { value: 15, cost: 0 }, { value: 16, cost: 5 }, { value: 17, cost: 14 }, { value: 18, cost: 23 },
+  { value: 19, cost: 32 }, { value: 20, cost: 41 }, { value: 21, cost: 50 }, { value: 22, cost: 59 },
+  { value: 23, cost: 68 }, { value: 24, cost: 77 }, { value: 25, cost: 87 }, { value: 26, cost: 98 },
+  { value: 27, cost: 110 }, { value: 28, cost: 123 }, { value: 29, cost: 137 }, { value: 30, cost: 152 },
+  { value: 31, cost: 168 }, { value: 32, cost: 185 }, { value: 33, cost: 203 }, { value: 34, cost: 222 },
+  { value: 35, cost: 242 }, { value: 36, cost: 263 }, { value: 37, cost: 285 }, { value: 38, cost: 308 },
+  { value: 39, cost: 332 }, { value: 40, cost: 356 }, { value: 41, cost: 380 }, { value: 42, cost: 404 },
+  { value: 43, cost: 428 }, { value: 44, cost: 452 }, { value: 45, cost: 476 }, { value: 46, cost: 530 },
+  { value: 47, cost: 614 }, { value: 48, cost: 728 }, { value: 49, cost: 872 }, { value: 50, cost: 1046 },
+  { value: 51, cost: 1250 }, { value: 52, cost: 1484 }, { value: 53, cost: 1748 }
+];
+
+// BH
+const BH_Cooldown = [
+  { value: 200, cost: 0 }, { value: 190, cost: 10 }, { value: 180, cost: 28 },
+  { value: 170, cost: 46 }, { value: 160, cost: 64 }, { value: 150, cost: 82 },
+  { value: 140, cost: 100 }, { value: 130, cost: 118 }, { value: 120, cost: 136 },
+  { value: 110, cost: 154 }, { value: 100, cost: 172 }, { value: 90, cost: 190 },
+  { value: 80, cost: 208 }, { value: 70, cost: 226 }, { value: 60, cost: 244 }, { value: 50, cost: 262 }
+];
+const BH_Duration = [
+  { value: 15, cost: 0 }, { value: 16, cost: 5 }, { value: 17, cost: 14 }, { value: 18, cost: 23 },
+  { value: 19, cost: 32 }, { value: 20, cost: 41 }, { value: 21, cost: 50 }, { value: 22, cost: 59 },
+  { value: 23, cost: 68 }, { value: 24, cost: 77 }, { value: 25, cost: 86 }, { value: 26, cost: 95 },
+  { value: 27, cost: 104 }, { value: 28, cost: 113 }, { value: 29, cost: 122 }, { value: 30, cost: 131 },
+  { value: 31, cost: 165 }, { value: 32, cost: 224 }, { value: 33, cost: 308 }, { value: 34, cost: 417 },
+  { value: 35, cost: 551 }, { value: 36, cost: 710 }, { value: 37, cost: 894 }, { value: 38, cost: 1103 }
+];
+
+// DW
+const DW_Cooldown = [
+  { value: 300, cost: 0 }, { value: 290, cost: 8 }, { value: 280, cost: 24 }, { value: 270, cost: 40 },
+  { value: 260, cost: 56 }, { value: 250, cost: 72 }, { value: 240, cost: 88 }, { value: 230, cost: 104 },
+  { value: 220, cost: 120 }, { value: 210, cost: 136 }, { value: 200, cost: 152 }, { value: 190, cost: 168 },
+  { value: 180, cost: 184 }, { value: 170, cost: 200 }, { value: 160, cost: 216 }, { value: 150, cost: 232 },
+  { value: 140, cost: 248 }, { value: 130, cost: 264 }, { value: 120, cost: 280 }, { value: 110, cost: 346 },
+  { value: 100, cost: 512 }, { value: 90, cost: 688 }, { value: 80, cost: 874 }, { value: 70, cost: 1070 },
+  { value: 60, cost: 1276 }, { value: 50, cost: 1492 }
+];
+
+// SL
+const SL_Angle = [
+  { value: 30, cost: 0 }, { value: 31, cost: 5 }, { value: 32, cost: 16 }, { value: 33, cost: 27 },
+  { value: 34, cost: 38 }, { value: 35, cost: 49 }, { value: 36, cost: 60 }, { value: 37, cost: 71 },
+  { value: 38, cost: 82 }, { value: 39, cost: 93 }, { value: 40, cost: 104 }, { value: 41, cost: 115 },
+  { value: 42, cost: 126 }, { value: 43, cost: 137 }, { value: 44, cost: 148 }, { value: 45, cost: 159 },
+  { value: 46, cost: 170 }, { value: 47, cost: 181 }, { value: 48, cost: 192 }, { value: 49, cost: 203 },
+  { value: 50, cost: 214 }, { value: 51, cost: 225 }, { value: 52, cost: 236 }, { value: 53, cost: 247 },
+  { value: 54, cost: 258 }, { value: 55, cost: 269 }, { value: 56, cost: 280 }, { value: 57, cost: 291 },
+  { value: 58, cost: 302 }, { value: 59, cost: 313 }, { value: 60, cost: 324 }, { value: 61, cost: 337 },
+  { value: 62, cost: 352 }, { value: 63, cost: 369 }, { value: 64, cost: 388 }, { value: 65, cost: 409 },
+  { value: 66, cost: 432 }, { value: 67, cost: 457 }, { value: 68, cost: 484 }, { value: 69, cost: 513 },
+  { value: 70, cost: 544 }, { value: 71, cost: 577 }, { value: 72, cost: 612 }, { value: 73, cost: 649 },
+  { value: 74, cost: 688 }, { value: 75, cost: 729 }, { value: 76, cost: 772 }, { value: 77, cost: 817 },
+  { value: 78, cost: 864 }, { value: 79, cost: 913 }, { value: 80, cost: 964 }, { value: 81, cost: 1017 },
+  { value: 82, cost: 1072 }, { value: 83, cost: 1129 }, { value: 84, cost: 1188 }, { value: 85, cost: 1249 },
+  { value: 86, cost: 1312 }, { value: 87, cost: 1377 }, { value: 88, cost: 1444 }, { value: 89, cost: 1513 },
+  { value: 90, cost: 1584 }
+];
+const SL_Quantity = [
+  { value: 1, cost: 0 }, { value: 2, cost: 375 }, { value: 3, cost: 850 }, { value: 4, cost: 2500 }
+];
+
+/*** ==== HELPERS & MODEL ==== ***/
+const $ = sel => document.querySelector(sel);
+
+function fillSelect(sel, arr, fmt = v => v.value){
+  sel.innerHTML = arr.map((o,i)=> `<option value="${i}">${fmt(o)}</option>`).join('');
+}
+
+function currentState(){
+  return {
+    GT_Bonus_i: +$("#GT_Bonus_sel").value,
+    GT_Cooldown_i: +$("#GT_Cooldown_sel").value,
+    GT_Duration_i: +$("#GT_Duration_sel").value,
+    BH_Cooldown_i: +$("#BH_Cooldown_sel").value,
+    BH_Duration_i: +$("#BH_Duration_sel").value,
+    DW_Cooldown_i: +$("#DW_Cooldown_sel").value,
+    SL_Quantity_i: +$("#SL_Quantity_sel").value,
+    SL_Angle_i: +$("#SL_Angle_sel").value,
+    MVN_on: $("#MVN_has").checked,
+    MVN_offset: +$("#MVN_tier").value
+  };
+}
+
+function valueOf(key, idx){
+  const map = {GT_Bonus,GT_Cooldown,GT_Duration,BH_Cooldown,BH_Duration,DW_Cooldown,SL_Quantity,SL_Angle};
+  return map[key][idx].value;
+}
+function costOf(key, idx){
+  const map = {GT_Bonus,GT_Cooldown,GT_Duration,BH_Cooldown,BH_Duration,DW_Cooldown,SL_Quantity,SL_Angle};
+  return map[key][idx].cost;
+}
+
+// gcd/lcm
+function gcd(a,b){ return b ? gcd(b, a % b) : a; }
+function lcm(a,b){ return a / gcd(a,b) * b; }
+
+// MVN shared cooldown
+function effectiveCooldowns(state){
+  const gt = valueOf("GT_Cooldown", state.GT_Cooldown_i);
+  const bh = valueOf("BH_Cooldown", state.BH_Cooldown_i);
+  const dw = valueOf("DW_Cooldown", state.DW_Cooldown_i);
+  if(!state.MVN_on) return {gt,bh,dw};
+  const shared = Math.max(1, Math.round((gt + bh + dw)/3 + state.MVN_offset));
+  return {gt: shared, bh: shared, dw: shared};
+}
+
+// Multiplicative simulation (1s) over a period ≈ LCM of cooldowns (cap 3600s)
+function simulateMultiplier(state){
+  // SL – always on, coverage
+  const SL_Q = valueOf("SL_Quantity", state.SL_Quantity_i);
+  const SL_A = valueOf("SL_Angle", state.SL_Angle_i);
+  const coverage = Math.min(1, (SL_Q * SL_A) / 360);
+  const SLmult = 1 + (3 - 1) * coverage;
+
+  // GT/BH/DW bonuses & durations
+  const GTbonus = valueOf("GT_Bonus", state.GT_Bonus_i);
+  const GTdur   = valueOf("GT_Duration", state.GT_Duration_i);
+
+  const BHbonus = 11;
+  const BHdur   = valueOf("BH_Duration", state.BH_Duration_i);
+
+  const DWbonus = 2.5;
+  const DWdur   = 10; // ring
+
+  const {gt:GTcd, bh:BHcd, dw:DWcd} = effectiveCooldowns(state);
+
+  let period = lcm(lcm(GTcd, BHcd), DWcd);
+  period = Math.min(period, 3600);
+  if (period < Math.max(GTdur, BHdur, DWdur)) period = Math.max(GTdur, BHdur, DWdur);
+
+  let sumMult = 0;
+  for(let t=0; t<period; t++){
+    const activeGT = ((t % GTcd) < GTdur) ? GTbonus : 1;
+    const activeBH = ((t % BHcd) < BHdur) ? BHbonus : 1;
+    const activeDW = ((t % DWcd) < DWdur) ? DWbonus : 1;
+    sumMult += SLmult * activeGT * activeBH * activeDW;
+  }
+  return sumMult / period;
+}
+
+function cloneState(s){ return JSON.parse(JSON.stringify(s)); }
+
+const NEXT_DIR = {
+  GT_Bonus:+1, GT_Cooldown:+1, GT_Duration:+1,
+  BH_Cooldown:+1, BH_Duration:+1,
+  DW_Cooldown:+1, SL_Angle:+1, SL_Quantity:+1
+};
+const LIMITS = {
+  GT_Bonus: GT_Bonus.length-1, GT_Cooldown: GT_Cooldown.length-1, GT_Duration: GT_Duration.length-1,
+  BH_Cooldown: BH_Cooldown.length-1, BH_Duration: BH_Duration.length-1,
+  DW_Cooldown: DW_Cooldown.length-1, SL_Angle: SL_Angle.length-1, SL_Quantity: SL_Quantity.length-1
+};
+
+// Single-step candidate
+function tryUpgrade(state, key){
+  const idxKey = key + "_i";
+  const idx = state[idxKey];
+  if(idx >= LIMITS[key]) return null;
+  const nextIdx = idx + NEXT_DIR[key];
+  const before = simulateMultiplier(state);
+  const afterState = cloneState(state);
+  afterState[idxKey] = nextIdx;
+  const after = simulateMultiplier(afterState);
+  const gain = after / before - 1;
+  const cost = costOf(key, nextIdx);
+  return {key, from:valueOf(key, idx), to:valueOf(key,nextIdx), nextIdx, gain, gainPct: gain*100, cost, score: gain / Math.max(1,cost)};
+}
+
+function allPossibleNext(state){
+  return ["GT_Bonus","GT_Cooldown","GT_Duration","BH_Cooldown","BH_Duration","DW_Cooldown","SL_Angle","SL_Quantity"]
+    .map(k=>tryUpgrade(state,k)).filter(Boolean);
+}
+
+// Lookahead: combine multiple cheaper steps within the budget (the expensive upgrade's cost)
+function lookaheadPlan(state, budget){
+  let working = cloneState(state);
+  let totalCost = 0;
+  let startMult = simulateMultiplier(working);
+  let currMult = startMult;
+  const plan = [];
+
+  while(true){
+    const candidates = allPossibleNext(working)
+      .filter(c => totalCost + c.cost <= budget && c.cost > 0);
+    if(!candidates.length) break;
+    candidates.sort((a,b)=> (b.score - a.score) || (b.gain - a.gain));
+    const pick = candidates[0];
+    working[pick.key + "_i"] = pick.nextIdx;
+    totalCost += pick.cost;
+    const newMult = simulateMultiplier(working);
+    const stepGain = newMult / currMult - 1;
+    plan.push({...pick, stepGain});
+    currMult = newMult;
+  }
+
+  const totalGain = currMult / startMult - 1;
+  return { plan, totalCost, totalGain, ratio: totalGain / Math.max(1, totalCost) };
+}
+
+// Choose next step, optionally with lookahead
+function pickBestNext(state, useLookahead){
+  const cand = allPossibleNext(state);
+  if(!cand.length) return null;
+  cand.sort((a,b)=> (b.score - a.score) || (b.gain - a.gain));
+  const primary = cand[0]; // best single-step per cost
+
+  if(!useLookahead || primary.cost <= 0){
+    return {...primary, usedLookahead:false};
+  }
+
+  // Build a combo plan under budget = primary.cost
+  const plan = lookaheadPlan(state, primary.cost);
+
+  if(plan.plan.length >= 1 && plan.ratio > (primary.gain / Math.max(1, primary.cost))){
+    const first = plan.plan[0];
+    return {
+      ...first,
+      usedLookahead:true,
+      altCompared: { single: primary, combo: plan }
+    };
+  }
+
+  return {...primary, usedLookahead:false};
+}
+
+/*** ==== UI ==== ***/
+function renderCurrentMult(){
+  const m = simulateMultiplier(currentState());
+  $("#currentMultiplier").textContent = "Current effective multiplier: " + m.toFixed(4) + "×";
+}
+function fmtPctDirect(p){ return p.toFixed(2)+"%"; }
+function fmtNum(x){ return x.toLocaleString("en-US"); }
+
+function renderNext(){
+  const state = currentState();
+  const best = pickBestNext(state, $("#chkLookahead").checked);
+  if(!best){
+    $("#nextResult").innerHTML = "<strong>Everything is maxed.</strong>";
+    return;
+  }
+  const newState = cloneState(state);
+  newState[best.key+"_i"] = best.nextIdx;
+  const before = simulateMultiplier(state);
+  const after = simulateMultiplier(newState);
+
+  let note = "";
+  if(best.usedLookahead){
+    const single = best.altCompared.single;
+    const combo = best.altCompared.combo;
+    note = `<div class="tiny">Lookahead beat the single upgrade:
+      single: +${fmtPctDirect(single.gain*100)} for cost ${fmtNum(single.cost)} (${(single.gain/Math.max(1,single.cost)).toFixed(6)} /cost)
+      vs combo: +${fmtPctDirect(combo.totalGain*100)} for cost ${fmtNum(combo.totalCost)} (${combo.ratio.toFixed(6)} /cost).</div>`;
+  }
+
+  $("#nextResult").innerHTML = `
+    Next optimal upgrade: <strong>${best.key.replaceAll("_"," ")}</strong>
+    → <strong>${best.to}</strong> (cost <strong>${fmtNum(best.cost)}</strong>).<br/>
+    Improvement: <strong>${fmtPctDirect(best.gain*100)}</strong>
+    (from ${before.toFixed(4)}× to ${after.toFixed(4)}×).
+    ${note}
+  `;
+}
+
+function renderSequence(){
+  const tbody = $("#seqTable tbody");
+  tbody.innerHTML = "";
+  let state = currentState();
+  let step = 0;
+  let currentMult = simulateMultiplier(state);
+  renderCurrentMult();
+
+  while(true){
+    const best = pickBestNext(state, $("#chkLookahead").checked);
+    if(!best) break;
+
+    state[best.key+"_i"] = best.nextIdx;
+    const newMult = simulateMultiplier(state);
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${++step}</td>
+      <td>${best.key.replaceAll("_"," ")}</td>
+      <td>${best.to}</td>
+      <td class="num">${fmtNum(best.cost)}</td>
+      <td class="num">${fmtPctDirect((newMult/currentMult-1)*100)}</td>
+      <td class="num">${(best.gain / Math.max(1,best.cost)).toFixed(6)}</td>
+      <td class="num">${newMult.toFixed(4)}×</td>
+    `;
+    tbody.appendChild(tr);
+    currentMult = newMult;
+
+    if(step>999) break; // safety
+  }
+
+  if(step===0){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="7" class="muted">Nothing to upgrade — everything is maxed from current levels.</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+/*** ==== INIT & EVENTS ==== ***/
+fillSelect($("#GT_Bonus_sel"), GT_Bonus, o=>o.value.toFixed(2)+"x");
+fillSelect($("#GT_Cooldown_sel"), GT_Cooldown, o=>o.value+" s");
+fillSelect($("#GT_Duration_sel"), GT_Duration, o=>o.value+" s");
+fillSelect($("#BH_Cooldown_sel"), BH_Cooldown, o=>o.value+" s");
+fillSelect($("#BH_Duration_sel"), BH_Duration, o=>o.value+" s");
+fillSelect($("#DW_Cooldown_sel"), DW_Cooldown, o=>o.value+" s");
+fillSelect($("#SL_Quantity_sel"), SL_Quantity, o=>o.value);
+fillSelect($("#SL_Angle_sel"), SL_Angle, o=>o.value+"°");
+
+// Start at the lowest entries (adjust freely in the UI)
+document.querySelectorAll("select").forEach(s=> s.value = 0);
+renderCurrentMult();
+
+document.querySelectorAll("select, input[type=checkbox]").forEach(el=>{
+  el.addEventListener("change", ()=>{
+    renderCurrentMult();
+    $("#nextResult").innerHTML = `<span class="muted">Click “Compute NEXT best”.</span>`;
+    $("#seqTable tbody").innerHTML = "";
+  });
+});
+
+$("#btn-next").addEventListener("click", ()=>{ renderCurrentMult(); renderNext(); });
+$("#btn-sequence").addEventListener("click", ()=>{ renderCurrentMult(); renderSequence(); });
+</script>
+</body>
+</html>
